@@ -1,0 +1,41 @@
+import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { redirect } from "next/navigation";
+import RecurringClient from "./RecurringClient";
+
+export default async function RecurringPage() {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/auth/login");
+
+  const recurrings = await db.recurring.findMany({
+    where:   { userId: session.user.id },
+    include: { vendor: { select: { name: true, nameKorean: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const user = await db.user.findUnique({
+    where:  { id: session.user.id },
+    select: { tokenBalance: true },
+  });
+
+  return (
+    <div className="p-6 max-w-3xl mx-auto animate-fade-in">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-semibold text-[var(--text-primary)]">Recurring payments</h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-0.5">
+            Auto-payments run on your chosen day each month
+          </p>
+        </div>
+        <a href="/dashboard" className="btn-primary text-[13px]">
+          + Set up new
+        </a>
+      </div>
+
+      <RecurringClient
+        recurrings={JSON.parse(JSON.stringify(recurrings))}
+        tokenBalance={user?.tokenBalance ?? 0}
+      />
+    </div>
+  );
+}

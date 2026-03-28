@@ -1,0 +1,19 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD THIS MODEL TO prisma/schema.prisma
+// Place it near the bottom, after PromotionCode
+// ─────────────────────────────────────────────────────────────────────────────
+
+model KnowledgeEntry {
+  id          String    @id @default(cuid())
+  category    String    // PRICING | PROCESS | SERVICE_SCOPE | VENDOR | LOCAL_INFO | POLICY
+  title       String
+  content     String    @db.Text
+  isActive    Boolean   @default(true)
+  appliesTo   String?   // phone | transport | utilities | rent | general | etc.
+  source      String?
+  verifiedAt  DateTime?
+  expiresAt   DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}

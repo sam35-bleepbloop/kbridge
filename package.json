@@ -1,0 +1,53 @@
+{
+  "name": "kbridge",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "@auth/prisma-adapter": "^2.4.2",
+    "@prisma/client": "^5.17.0",
+    "@stripe/stripe-js": "^4.3.0",
+    "ai": "^3.3.0",
+    "bcryptjs": "^3.0.3",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.6.0",
+    "geist": "^1.7.0",
+    "jose": "^6.2.2",
+    "next": "^16.2.0",
+    "next-auth": "^5.0.0-beta.20",
+    "react": "^18",
+    "react-dom": "^18",
+    "react-markdown": "^10.1.0",
+    "stripe": "^16.2.0",
+    "tailwind-merge": "^2.4.0",
+    "twilio": "^5.2.3",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/node": "^20.19.37",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.4.27",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.5",
+    "postcss": "^8.5.8",
+    "prisma": "^5.17.0",
+    "tailwindcss": "^3.4.19",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

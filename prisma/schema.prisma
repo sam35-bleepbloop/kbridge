@@ -1,0 +1,616 @@
+// K-Bridge — Prisma Schema v4.0
+// Single source of truth for the database.
+// Deploy via: npx prisma db push (NOT prisma migrate dev — see workaround #5)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")  // Required for Supabase connection pooling
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// REVISED v4.0: US_BASED | PENDING_SOFA | VERIFIED_SOFA (replaces PENDING | VERIFIED | DECLINED)
+enum SofaDeclaration {
+  US_BASED      // Default — no in-country certification. Inquiry tasks only.
+  PENDING_SOFA  // Tier 1: self-cert + IP geolocation logged. Inquiry + 5 one-off payments.
+  VERIFIED_SOFA // Tier 2: CAC scan (Sumsub) OR command letter. Full access.
+}
+
+enum TaskType {
+  RECURRING_SETUP       // First-time setup of a recurring payment
+  RECURRING_EXECUTION   // Automatic subsequent run
+  ONE_OFF_PAYMENT       // Ad-hoc payment: traffic tickets, bills, etc.
+  SERVICE_BOOKING       // Cleaners, groceries, attractions (Phase 4)
+  INQUIRY               // Quote / price check / info only
+  SUPPORT               // Technical support / account issues — always free, never charges tokens
+  OTHER                 // Unclassified — legacy only, do not assign to new tasks
+}
+
+// REVISED v4.0: Added DRAFT and PENDING_PARTNER
+enum TaskStatus {
+  DRAFT            // Pre-arrival task — not active, not billed. Activates on Tier 1 SOFA cert.
+  OPEN             // Created, AI beginning clarification
+  CLARIFYING       // AI actively gathering info from user
+  AI_PROCESSING    // AI building proposal / drafting vendor SMS
+  PENDING_HUMAN    // Requires employee action — in assignment queue
+  PENDING_PARTNER  // Routed to Partners Portal queue — awaiting partner org action
+  PENDING_USER     // Proposal ready — awaiting user confirmation
+  PAYMENT_PENDING  // User confirmed — gateway call initiated
+  COMPLETE         // Payment confirmed, calendar/SMS/email sent, tokens burned (terminal)
+  CANCELLED        // Cancelled by user or admin; token reservation released (terminal)
+  FAILED           // Gateway or system failure; retriable
+}
+
+enum TokenTxType {
+  PURCHASE              // User bought a token pack
+  BURN                  // Task consumed tokens (after payment/purchase fully complete)
+  RESERVATION           // Tokens reserved at task confirm (pre-burn hold)
+  RESERVATION_RELEASE   // Reservation released on cancel
+  REFUND                // Admin-issued refund
+  ADMIN_ADJUSTMENT      // Manual correction with reason
+  BONUS                 // Welcome bonus, referral bonus, admin grant
+}
+
+enum EmployeeRole {
+  AGENT
+  SENIOR_AGENT
+  ADMIN
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  REASSIGNED
+}
+
+enum AssignmentUrgency {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// REVISED v4.0: NIUM | STRIPE only (removed DWOLLA, WISE, ADYEN, TAZAPAY)
+enum PaymentGateway {
+  NIUM    // ACH pull + USD→KRW FX + KRW local delivery (recurring payments + provider reimbursement)
+  STRIPE  // Card processing (one-off direct card payments + token purchases)
+}
+
+// REVISED v4.0: ACH_RECURRING | DIRECT_CARD | TOKEN_PURCHASE (replaces BANK | CARD_WALLET)
+enum PaymentRouteType {
+  ACH_RECURRING  // Nium ACH pull from US bank → KRW delivery to Korean provider
+  DIRECT_CARD    // Stripe card charge (product cost + Stripe fee + 2.6% FX buffer)
+  TOKEN_PURCHASE // Stripe card charge for token packs (domestic USD, no FX component)
+}
+
+enum PaymentStatus {
+  INITIATED
+  PROCESSING
+  CONFIRMED
+  FAILED
+  REFUNDED
+}
+
+enum VendorCategory {
+  LANDLORD
+  GROCER
+  CLEANER
+  ATTRACTION
+  UTILITY
+  GOVERNMENT
+  TELECOM
+  DAYCARE
+  OTHER
+}
+
+enum RecurringType {
+  RENT
+  PHONE
+  DAYCARE
+  UTILITY
+  OTHER
+}
+
+enum PausedReason {
+  NONE
+  INSUFFICIENT_TOKENS   // Balance too low — alert sent, waiting for top-up
+  PAYMENT_FAILED        // Last execution failed — needs investigation
+  USER_PAUSED           // User manually paused
+  ADMIN_PAUSED          // Admin paused pending review
+}
+
+enum PriceConfidence {
+  HIGH    // Verified data < 30 days old
+  MEDIUM  // 30–90 days old
+  LOW     // 90–180 days old
+  STALE   // > 180 days — display with caveat
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEXTAUTH TABLES (required by @auth/prisma-adapter)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORE TABLES
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+  id               String          @id @default(cuid())
+  email            String          @unique
+  emailVerified    DateTime?
+  displayName      String?
+  image            String?         // WORKAROUND #1: reused to store bcryptjs password hash
+
+  // Profile
+  addressJson      Json?           // { street, city, base, unit, zipCode }
+  preferencesJson  Json?           // { preferredVendors, language, etc. }
+  consentFlagsJson Json?           // { usePreferences, dataRetention, marketing }
+
+  // SOFA verification — REVISED v4.0
+  sofaDeclaration        SofaDeclaration @default(US_BASED)
+  pendingSofaPaymentCount Int            @default(0)  // Tracks one-off payments used while PENDING_SOFA (hard cap: 5)
+
+  // Contact
+  phoneKr        String?
+  phoneUs        String?
+
+  // Referral
+  referralCode   String?   @unique  // KB-XXXX format
+  referredByCode String?
+
+  // KYC/AML — Sumsub (replaces Dwolla KYC fields — workaround #87)
+  sumsubApplicantId        String?   // Sumsub applicant reference ID
+  sumsubVerificationStatus String?   // Raw status string from Sumsub webhook
+  tier2VerificationMethod  String?   // "CAC" | "COMMAND_LETTER"
+  tier2VerifiedAt          DateTime?
+
+  // SOFA Tier 1 geolocation logging
+  ipGeoLoggedAt   DateTime?  // Timestamp when self-cert + IP were logged
+
+  // Path B (coming to Korea) fields
+  expectedArrivalDate DateTime?  // Month/year of expected Korea arrival
+  arrivedAt           DateTime?  // Set when Path B user completes Tier 1 self-cert
+
+  // Abuse prevention — retained permanently post-deletion (workaround #90)
+  hashedEmail     String?   // SHA-256 of lowercased email — NEVER cleared on soft-delete
+
+  // Calendar
+  calendarToken    String?         @db.Text  // Encrypted Google OAuth token
+
+  // Tokens — REVISED v4.0: welcome bonus 5 (was 8)
+  tokenBalance     Int             @default(5)
+  stripeCustomerId String?         @unique
+
+  // DEROS
+  derosDate              DateTime? @map("deros_date")
+  derosAlertSentAt       DateTime? // Set when 45-day DEROS alert is sent
+  derosSecondAlertSentAt DateTime? // Set when 14-day DEROS alert is sent
+
+  // Timestamps
+  createdAt        DateTime        @default(now())
+  lastActiveAt     DateTime        @default(now()) @updatedAt
+
+  // Partners Portal
+  isPartner        Boolean         @default(false)
+  partnerOrgId     String?
+  partnerOrg       PartnerOrg?     @relation(fields: [partnerOrgId], references: [id])
+
+  // Relations
+  accounts         Account[]
+  sessions         Session[]
+  tasks            Task[]
+  tokenLedger      TokenLedger[]
+  recurrings       Recurring[]
+  payments         Payment[]
+  reviews          Review[]
+  partnerOutcomeApprovals PartnerOutcome[] @relation("ApprovedBy")
+}
+
+model Employee {
+  id          String           @id @default(cuid())
+  name        String
+  email       String           @unique
+  role        EmployeeRole     @default(AGENT)
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+
+  assignments TaskAssignment[]
+}
+
+model Task {
+  id                 String      @id @default(cuid())
+  userId             String
+  user               User        @relation(fields: [userId], references: [id])
+
+  type               TaskType
+  status             TaskStatus  @default(OPEN)
+
+  // Token accounting
+  tokenEstimate      Int?        // AI estimate shown to user before confirmation
+  tokenActual        Int?        // Final burn logged at task close (after payment complete)
+  tokenReserved      Int?        // Tokens held during task execution
+  complexityScore    Int?        // 1–5, feeds AI estimator over time
+
+  // Content
+  chatHistoryJson    Json        @default("[]")  // [{ role, content, timestamp }]
+  outcomeJson        Json?       // Structured result after completion
+  internalNotesJson  Json        @default("[]")  // Employee notes — not shown to user
+
+  // Human routing
+  requiresHuman      Boolean     @default(false)
+  escalationReason   String?
+  assignedEmployeeId String?
+
+  // Vendor outreach SMS escalation timer
+  vendorOutreachSentAt     DateTime?  // When the outreach SMS was sent to vendor
+  vendorOutreachDeadlineAt DateTime?  // When auto-escalation triggers if no vendor response
+
+  // AI-generated label (Phase 2 — see workaround #11)
+  label              String?
+
+  // Timestamps
+  createdAt          DateTime    @default(now())
+  closedAt           DateTime?
+  lastActivityAt     DateTime    @default(now())
+
+  // Relations
+  payments           Payment[]
+  assignments        TaskAssignment[]
+  tokenLedger        TokenLedger[]
+  auditLog           AuditLog[]
+  review             Review?
+  partnerTask        PartnerTask?
+}
+
+model TaskAssignment {
+  id          String            @id @default(cuid())
+  taskId      String?
+  task        Task?    @relation(fields: [taskId], references: [id])
+  employeeId  String
+  employee    Employee          @relation(fields: [employeeId], references: [id])
+
+  status      AssignmentStatus  @default(ASSIGNED)
+  urgency     AssignmentUrgency @default(MEDIUM)
+  notes       String?           @db.Text
+
+  assignedAt  DateTime          @default(now())
+  resolvedAt  DateTime?
+
+  @@index([taskId])
+  @@index([employeeId, status])
+}
+
+model TokenLedger {
+  id           String       @id @default(cuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id])
+  taskId       String?
+  task         Task?        @relation(fields: [taskId], references: [id])
+
+  txType       TokenTxType
+  amount       Int          // Positive = credit, negative = debit
+  balanceAfter Int          // Snapshot of balance after this tx
+  description  String       // Human-readable reason
+
+  createdAt    DateTime     @default(now())
+
+  @@index([userId])
+  @@index([taskId])
+}
+
+model Payment {
+  id           String           @id @default(cuid())
+  taskId       String
+  task         Task             @relation(fields: [taskId], references: [id])
+  userId       String
+  user         User             @relation(fields: [userId], references: [id])
+
+  // REVISED v4.0: NIUM | STRIPE only
+  gateway      PaymentGateway
+  // REVISED v4.0: ACH_RECURRING | DIRECT_CARD | TOKEN_PURCHASE
+  routeType    PaymentRouteType
+
+  // USD side
+  amountUsd    Decimal          @db.Decimal(10, 2)   // Product/service cost in USD
+  feeUsd       Decimal          @db.Decimal(10, 2)   // Stripe processing fee (card payments only)
+  feePct       Decimal          @db.Decimal(5, 4)    // e.g. 0.0290 = 2.9% Stripe fee
+
+  // FX buffer — DIRECT_CARD payments only (workaround #91/#95)
+  fxBufferUsd  Decimal?         @db.Decimal(10, 2)   // 2.6% FX buffer amount in USD
+  fxBufferPct  Decimal?         @db.Decimal(5, 4)    // e.g. 0.0260 = 2.6% — stored for auditability
+
+  // KRW side
+  amountKrw    Decimal          @db.Decimal(15, 0)
+  fxRate       Decimal          @db.Decimal(10, 4)   // USD/KRW at time of transaction
+
+  // Provider references — provider-agnostic
+  gatewayRef           String?  // Stripe charge ID or Nium payout ref
+  externalTransferRef  String?  // Secondary provider reference (e.g. Nium systemReferenceNumber)
+
+  status       PaymentStatus    @default(INITIATED)
+
+  // Memo sent with payment so vendor can identify payer
+  // Format: KBRIDGE-[4char taskId suffix]-[initials]-[YYYYMM]
+  memo         String
+
+  initiatedAt  DateTime         @default(now())
+  confirmedAt  DateTime?
+
+  @@index([taskId])
+  @@index([userId])
+}
+
+model Vendor {
+  id               String         @id @default(cuid())
+  name             String         // English display name
+  nameKorean       String?        // Korean name for Twilio SMS
+  category         VendorCategory
+
+  // Contact
+  phoneKorean      String?
+  email            String?
+
+  // Bank details — store encrypted, never log plaintext
+  bankDetailsJson  Json?          // { bankName, accountNumber, accountHolder }
+
+  // Provider-agnostic beneficiary registration (replaces Airwallex-specific fields — workaround #69)
+  externalBeneficiaryId       String?  // e.g. Nium beneficiary ID — registered once, reused
+  externalBeneficiaryProvider String?  // Which provider registered this beneficiary (e.g. "NIUM")
+
+  // Quality
+  avgRating        Float?
+  isApproved       Boolean        @default(false)
+  lastContactedAt  DateTime?
+
+  createdAt        DateTime       @default(now())
+
+  // Relations
+  recurrings       Recurring[]
+  reviews          Review[]
+}
+
+model Recurring {
+  id                  String         @id @default(cuid())
+  userId              String
+  user                User           @relation(fields: [userId], references: [id])
+  vendorId            String?
+  vendor              Vendor?        @relation(fields: [vendorId], references: [id])
+
+  label               String         // User-facing name, e.g. "Monthly rent — Kim Jae-won"
+  type                RecurringType
+
+  amountUsd           Decimal        @db.Decimal(10, 2)
+  currency            String         @default("USD")  // ADDED v4.0: USD | KRW — critical for Nium accuracy (workaround #8)
+  preferredDay        Int            // 1–28: day of month to execute
+
+  // REVISED v4.0: now uses updated PaymentRouteType enum
+  gateway             PaymentRouteType @default(ACH_RECURRING)
+
+  // Snapshot of vendor payment details at setup time (encrypted)
+  vendorDetailsJson   Json?
+
+  // Execution state
+  firstRunApprovedAt  DateTime?
+  isActive            Boolean        @default(true)
+  pausedReason        PausedReason   @default(NONE)
+  nextRunAt           DateTime?
+
+  // Low-token alert tracking
+  lowTokenAlertSentAt DateTime?
+
+  createdAt           DateTime       @default(now())
+
+  @@index([userId])
+  @@index([nextRunAt, isActive])
+}
+
+model PriceReference {
+  id            String           @id @default(cuid())
+  category      String
+  subCategory   String
+  lowKrw        Int
+  highKrw       Int
+  confidence    PriceConfidence  @default(MEDIUM)
+  source        String
+  lastUpdatedAt DateTime         @default(now())
+
+  @@unique([category, subCategory])
+  @@index([category])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  vendorId  String
+  vendor    Vendor   @relation(fields: [vendorId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  taskId    String   @unique
+  task      Task     @relation(fields: [taskId], references: [id])
+
+  rating    Int
+  comment   String?  @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([vendorId])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  taskId      String?
+  task        Task?     @relation(fields: [taskId], references: [id])
+
+  actorId     String
+  actorType   String   // "user" | "employee" | "ai" | "system"
+  eventType   String   // e.g. "task_created", "status_changed", "payment_initiated"
+  payloadJson Json
+
+  createdAt   DateTime @default(now())
+
+  @@index([taskId])
+  @@index([actorId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PARTNERS PORTAL — NEW v4.0
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PartnerOrg {
+  id                 String    @id @default(cuid())
+  name               String
+  type               String    // "EXECUTION_PARTNER" | "VENDOR_AFFILIATE" | "SERVICE_PROVIDER"
+  contactEmail       String?
+  serviceFeeSharePct Float     @default(0.80)  // Configurable per contract. Default: 80% to provider, 20% to K-Bridge.
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+
+  // Relations
+  users              User[]
+  partnerTasks       PartnerTask[]
+}
+
+model PartnerTask {
+  id           String    @id @default(cuid())
+  taskId       String    @unique
+  task         Task      @relation(fields: [taskId], references: [id])
+  partnerOrgId String
+  partnerOrg   PartnerOrg @relation(fields: [partnerOrgId], references: [id])
+
+  // Bilingual structured payload — generated by generateTaskPayload() at routing time
+  payloadJson  Json      // Full task payload schema (see spec Section 9)
+
+  status       String    @default("PENDING")  // PENDING | IN_PROGRESS | AWAITING_USER | COMPLETE | ESCALATED
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  messages     PartnerMessage[]
+  outcome      PartnerOutcome?
+
+  @@index([partnerOrgId, status])
+}
+
+model PartnerMessage {
+  id            String    @id @default(cuid())
+  partnerTaskId String
+  partnerTask   PartnerTask @relation(fields: [partnerTaskId], references: [id])
+
+  // Who sent this message
+  sender        String    // "PARTNER" | "AI" | "USER"
+
+  // What kind of message
+  messageType   String    // "CLARIFICATION_REQUEST" | "AI_VERIFICATION" | "USER_RESPONSE" | "AI_CONFIRMATION"
+
+  content       String    @db.Text
+
+  // Confirmation loop tracking
+  confirmationStatus String @default("PENDING")  // "PENDING" | "CONFIRMED" | "REJECTED"
+  iterationCount     Int    @default(0)           // Max 3 — escalate to admin after 3 unresolved rounds
+  isEscalated        Boolean @default(false)      // Surfaces in admin queue
+
+  createdAt     DateTime  @default(now())
+
+  @@index([partnerTaskId])
+}
+
+model PartnerOutcome {
+  id              String    @id @default(cuid())
+  partnerTaskId   String    @unique
+  partnerTask     PartnerTask @relation(fields: [partnerTaskId], references: [id])
+
+  // What the partner actually did
+  costKrw         Decimal   @db.Decimal(15, 0)  // Actual KRW cost paid by partner
+  vendorName      String
+  referenceNumber String?   // Payment reference, receipt number, etc.
+  notes           String?   @db.Text
+
+  submittedAt     DateTime  @default(now())
+
+  // User approval
+  approvedByUserId String?
+  approvedBy       User?    @relation("ApprovedBy", fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime?
+
+  // Settlement — stub only until attorney opinion on intercompany mechanics (workaround #93)
+  settlementStatus String   @default("PENDING")  // PENDING | SETTLED — filled after attorney opinion
+
+  @@index([settlementStatus])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROMOTION CODES — NEW v4.0
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PromotionCode {
+  id           String    @id @default(cuid())
+  code         String    @unique  // e.g. "WELCOME10" — case-insensitive enforced in application layer
+  type         String    // "PACK_DISCOUNT" | "BONUS_TOKENS"
+  discountPct  Float?    // For PACK_DISCOUNT — e.g. 0.10 = 10% off
+  bonusTokens  Int?      // For BONUS_TOKENS — flat grant amount
+  targetPackId String?   // null = applies to all packs. Matches Stripe Price ID.
+  maxUses      Int?      // null = unlimited
+  usedCount    Int       @default(0)
+  expiresAt    DateTime?
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  @@index([code])
+}
+
+model KnowledgeEntry {
+  id          String    @id @default(cuid())
+  category    String
+  title       String
+  content     String    @db.Text
+  isActive    Boolean   @default(true)
+  appliesTo   String?
+  source      String?
+  verifiedAt  DateTime?
+  expiresAt   DateTime?
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
