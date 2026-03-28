@@ -22,7 +22,7 @@ export default async function DashboardPage() {
     db.task.findMany({
       where: {
         userId,
-        status: { in: ["OPEN", "CLARIFYING", "AI_PROCESSING", "PENDING_HUMAN", "PENDING_USER", "PAYMENT_PENDING"] },
+        status: { in: ["DRAFT", "OPEN", "CLARIFYING", "AI_PROCESSING", "PENDING_HUMAN", "PENDING_PARTNER", "PENDING_USER", "PAYMENT_PENDING"] },
       },
       orderBy: { lastActivityAt: "desc" },
       take: 10,
@@ -100,7 +100,7 @@ export default async function DashboardPage() {
           <div className="text-2xl font-semibold text-[var(--text-primary)]">
             {user?.tokenBalance ?? 0}
           </div>
-          <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">$1.50 per token</div>
+          <div className="text-[11px] text-[var(--text-secondary)] mt-0.5">from $1.70 per token</div>
           <Link
             href="/tokens"
             className="text-[11px] font-medium mt-1 inline-block"

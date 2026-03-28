@@ -97,7 +97,7 @@ export async function escalateToHuman(
     orderBy: { createdAt: "asc" },
   });
 
-  await db.$transaction(async (tx) => {
+await db.$transaction(async (tx) => {
     await tx.task.update({
       where: { id: taskId },
       data:  {
@@ -108,15 +108,29 @@ export async function escalateToHuman(
       },
     });
 
-    await tx.taskAssignment.create({
-      data: {
-        taskId,
-        employeeId: employee?.id ?? (await getAdminId(tx)),
-        status:     "ASSIGNED",
-        urgency,
-        notes:      reason,
-      },
+    // Guard against duplicate queue entries — if this task is re-escalated
+    // (e.g. AI escalates a second time after employee handoff), reuse the
+    // existing active assignment rather than creating a second queue entry.
+    const existingAssignment = await tx.taskAssignment.findFirst({
+      where: { taskId, status: { in: ["ASSIGNED", "IN_PROGRESS"] } },
     });
+
+    if (existingAssignment) {
+      await tx.taskAssignment.update({
+        where: { id: existingAssignment.id },
+        data:  { urgency, notes: reason, status: "ASSIGNED" },
+      });
+    } else {
+      await tx.taskAssignment.create({
+        data: {
+          taskId,
+          employeeId: employee?.id ?? (await getAdminId(tx)),
+          status:     "ASSIGNED",
+          urgency,
+          notes:      reason,
+        },
+      });
+    }
 
     await tx.auditLog.create({
       data: {
@@ -124,7 +138,7 @@ export async function escalateToHuman(
         actorId:     "system",
         actorType:   "system",
         eventType:   "escalated_to_human",
-        payloadJson: { reason, urgency, assignedTo: employee?.id },
+        payloadJson: { reason, urgency, assignedTo: employee?.id, reescalation: !!existingAssignment },
       },
     });
   });

@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth";
 import { streamChatResponse } from "@/lib/ai/chat";
 import { transitionTask, escalateToHuman } from "@/lib/tasks/stateMachine";
-import { burnTokens, reserveTokens } from "@/lib/tokens/engine";
+import { burnTokens, reserveTokens, TASK_OPEN_COST, TOKEN_COSTS } from "@/lib/tokens/engine";
 import { db } from "@/lib/db";
 import { NextRequest } from "next/server";
 
@@ -44,55 +44,64 @@ async function handleTokenBurnOnComplete(taskId: string, userId: string): Promis
     where:  { id: taskId },
     select: {
       tokenReserved: true,
-      tokenEstimate: true,
       tokenActual:   true,
       type:          true,
     },
   });
-
   if (!task) return;
 
-  // Already burned (tokenActual is set) — don't double-burn
+  // Already burned — don't double-burn
   if (task.tokenActual !== null && task.tokenActual > 0) return;
 
-  const reserved = task.tokenReserved ?? 0;
-  const estimate = task.tokenEstimate ?? 1;
+  // SUPPORT tasks are always free — never burn
+  if (task.type === "SUPPORT") return;
 
-  if (reserved > 0) {
-    // Case A: prior reservation exists — confirm the burn
-    // Actual = reserved (for now; future: AI could report actual cost)
-    await burnTokens(
-      userId,
-      taskId,
-      reserved,
-      `Task completed — ${task.type.replace(/_/g, " ").toLowerCase()}`
-    );
-  } else {
-    // Case B: no reservation (typical for inquiry tasks) — reserve then burn
-    // Use tokenEstimate as the burn amount; fall back to 1 for bare-minimum
-    const amount = estimate > 0 ? estimate : 1;
+  // Determine additional completion cost based on task type (v31 model).
+  // The 1-token opener was already deducted at task creation and is NOT
+  // refunded. Completion burns the additional service fee only.
+  // For inquiry tasks this is 0 (opener covers the full cost).
+  const additionalCost = TOKEN_COSTS[
+    task.type === "RECURRING_SETUP"     ? "RECURRING_SETUP"     :
+    task.type === "RECURRING_EXECUTION" ? "RECURRING_EXECUTION" :
+    task.type === "ONE_OFF_PAYMENT"     ? "ONE_OFF_AI_ONLY"     :
+    task.type === "SERVICE_BOOKING"     ? "ONE_OFF_AI_ONLY"     :
+    task.type === "INQUIRY"             ? "INQUIRY_SIMPLE"      :
+                                          "INQUIRY_SIMPLE"
+  ] ?? 0;
 
-    const reservation = await reserveTokens(
-      userId,
-      taskId,
-      amount,
-      `Service fee reserved — ${task.type.replace(/_/g, " ").toLowerCase()}`
-    );
-
-    if (!reservation.success) {
-      // Insufficient balance — burn whatever they have (minimum 0)
-      // This is an edge case; in production the token gate prevents reaching here
-      console.warn(`[tokens] Insufficient balance for burn on task ${taskId} — skipping`);
-      return;
-    }
-
-    await burnTokens(
-      userId,
-      taskId,
-      amount,
-      `Service fee — ${task.type.replace(/_/g, " ").toLowerCase()}`
-    );
+  if (additionalCost === 0) {
+    // Inquiry or fully-covered-by-opener task — just clear the reservation
+    await db.task.update({
+      where: { id: taskId },
+      data:  { tokenReserved: 0, tokenActual: TASK_OPEN_COST },
+    });
+    return;
   }
+
+  // Reserve and burn the additional completion cost
+  const reservation = await reserveTokens(
+    userId,
+    taskId,
+    additionalCost,
+    `Service fee (completion) — ${task.type.replace(/_/g, " ").toLowerCase()}`
+  );
+
+  if (!reservation.success) {
+    console.warn(`[tokens] Insufficient balance for completion burn on task ${taskId} — burning available`);
+    // Still close cleanly — mark tokenActual as opener only
+    await db.task.update({
+      where: { id: taskId },
+      data:  { tokenReserved: 0, tokenActual: TASK_OPEN_COST },
+    });
+    return;
+  }
+
+  await burnTokens(
+    userId,
+    taskId,
+    additionalCost,
+    `Service fee — ${task.type.replace(/_/g, " ").toLowerCase()}`
+  );
 }
 
 export async function POST(req: NextRequest) {
