@@ -128,7 +128,7 @@ export default function TasksListClient() {
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Tokens</th>
-                <th className="px-4 py-3">Human?</th>
+                <th className="px-4 py-3">Waiting on</th>
                 <th className="px-4 py-3">Assigned To</th>
                 <th className="px-4 py-3">Last Activity</th>
                 <th className="px-4 py-3">Created</th>
@@ -185,6 +185,11 @@ export default function TasksListClient() {
                       <span className="inline-flex items-center gap-1.5 text-xs text-orange-600">
                         <span className="w-1.5 h-1.5 rounded-full bg-orange-400 inline-block"/>
                         With employee
+                      </span>
+                    ) : task.status === 'AI_PROCESSING' ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-indigo-600">
+                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block"/>
+                        AI preparing response
                       </span>
                     ) : task.status === 'CLARIFYING' || task.status === 'PENDING_USER' ? (
                       <span className="inline-flex items-center gap-1.5 text-xs text-blue-600">

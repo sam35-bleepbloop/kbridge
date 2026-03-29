@@ -255,7 +255,7 @@ const STATUS_CONFIG: Record<string, { label: string; badgeClass: string }> = {
   OPEN:            { label: "Open",            badgeClass: "badge-neutral" },
   CLARIFYING:      { label: "AI chatting",     badgeClass: "badge-neutral" },
   AI_PROCESSING:   { label: "AI processing",   badgeClass: "badge-neutral" },
-  PENDING_HUMAN:   { label: "Employee review", badgeClass: "badge-warn" },
+  PENDING_HUMAN:   { label: "With our team",   badgeClass: "badge-warn" },
   PENDING_USER:    { label: "Your action",     badgeClass: "badge-navy" },
   PAYMENT_PENDING: { label: "Payment sending", badgeClass: "badge-neutral" },
 };
@@ -273,14 +273,20 @@ export function TaskCard({ task }: { task: any }) {
   const cfg     = STATUS_CONFIG[task.status] ?? { label: task.status, badgeClass: "badge-neutral" };
   const history = Array.isArray(task.chatHistoryJson) ? task.chatHistoryJson : [];
 
-  // Attention indicator: CLARIFYING but last message is from AI — ball is in user's court.
-  // This fires after an employee handoff returns the task to the user for follow-up.
+  // ── Attention logic ─────────────────────────────────────────────────────
+  // Priority 1: CLARIFYING + last message from AI = user needs to respond
+  // Priority 2: PENDING_HUMAN = task is with our team (not waiting on user)
+  // Priority 3: AI_PROCESSING = employee just resolved, AI is preparing response
   const lastChatMsg    = history.at(-1);
-  const needsAttention = task.status === "CLARIFYING" && lastChatMsg?.role === "assistant";
+  const needsUserReply = task.status === "CLARIFYING" && lastChatMsg?.role === "assistant";
+  const withTeam       = task.status === "PENDING_HUMAN";
+  const aiProcessing   = task.status === "AI_PROCESSING";
+
+  // Left border accent for tasks that need the user's attention
+  const isPriority = task.status === "PENDING_USER" || needsUserReply;
 
   // Title: prefer AI-generated label, fall back to type label
-  const title      = task.label ?? TYPE_LABELS[task.type] ?? "Task";
-  const isPriority = task.status === "PENDING_USER" || needsAttention;
+  const title = task.label ?? TYPE_LABELS[task.type] ?? "Task";
 
   return (
     <a
@@ -295,12 +301,29 @@ export function TaskCard({ task }: { task: any }) {
         </div>
       </div>
       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-        {needsAttention ? (
+        {needsUserReply ? (
+          /* User needs to respond — highest visual priority */
           <span className="badge badge-navy" style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <svg width="7" height="7" viewBox="0 0 7 7" fill="currentColor">
               <circle cx="3.5" cy="3.5" r="3.5"/>
             </svg>
             Your response needed
+          </span>
+        ) : withTeam ? (
+          /* Task is with an employee — user doesn't need to do anything */
+          <span className="badge badge-warn" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <svg width="7" height="7" viewBox="0 0 7 7" fill="currentColor">
+              <circle cx="3.5" cy="3.5" r="3.5"/>
+            </svg>
+            With our team
+          </span>
+        ) : aiProcessing ? (
+          /* Brief transition state — employee resolved, AI preparing response */
+          <span className="badge badge-neutral" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <svg width="7" height="7" viewBox="0 0 7 7" fill="currentColor" opacity="0.5">
+              <circle cx="3.5" cy="3.5" r="3.5"/>
+            </svg>
+            Preparing update
           </span>
         ) : (
           <span className={`badge ${cfg.badgeClass}`}>{cfg.label}</span>
