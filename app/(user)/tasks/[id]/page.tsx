@@ -332,7 +332,7 @@ export default function TaskChatPage() {
   // ── Derive task-done state ────────────────────────────────────────────────
 
   const taskDone = task
-    ? ["COMPLETED", "CANCELLED", "ARCHIVED", "PENDING_HUMAN"].includes(task.status)
+    ? ["COMPLETE", "CANCELLED", "FAILED", "PENDING_HUMAN"].includes(task.status)
     : false;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -508,9 +508,9 @@ function TypingIndicator() {
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; className: string }> = {
-    COMPLETED: { label: "Completed", className: "bg-green-100 text-green-700" },
+    COMPLETE: { label: "Completed", className: "bg-green-100 text-green-700" },
     CANCELLED: { label: "Cancelled", className: "bg-gray-100 text-gray-500" },
-    ARCHIVED: { label: "Archived", className: "bg-gray-100 text-gray-500" },
+    FAILED: { label: "Failed", className: "bg-red-50 text-red-600" },
     PENDING_HUMAN: {
       label: "Handed off to team",
       className: "bg-blue-50 text-blue-700",

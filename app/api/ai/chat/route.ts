@@ -28,6 +28,7 @@ function parseSignals(text: string): ParsedSignals {
     cleanText:      text
       .replace(/\[TASK_COMPLETE\]/g, "")
       .replace(/\[ESCALATE_TO_HUMAN:[^\]]*\]/g, "")
+      .replace(/\[ESCALATE_OFFER\]/g, "")
       .trim(),
   };
 }
@@ -224,7 +225,8 @@ export async function POST(req: NextRequest) {
     transform(chunk, controller) {
       const cleaned = chunk
         .replace(/\[TASK_COMPLETE\]/g, "")
-        .replace(/\[ESCALATE_TO_HUMAN:[^\]]*\]/g, "");
+        .replace(/\[ESCALATE_TO_HUMAN:[^\]]*\]/g, "")
+        .replace(/\[ESCALATE_OFFER\]/g, "");
       if (cleaned) controller.enqueue(cleaned);
     },
   });

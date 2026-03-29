@@ -44,12 +44,35 @@ export async function POST(req: NextRequest) {
     const packId     = metadata.packId;
     const amountPaid = (session.amount_total ?? 0) / 100;
 
-    await creditTokens(
+    const creditResult = await creditTokens(
       metadata.userId,
       tokens,
       "PURCHASE",
       `Purchased ${packId} pack — ${tokens} tokens ($${amountPaid.toFixed(2)})`
     );
+
+    // If credit failed (wallet cap exceeded), log for admin review (workaround #127)
+    if (!creditResult.success) {
+      console.error(`[STRIPE] CRITICAL: Token credit failed for user ${metadata.userId} — wallet cap (${creditResult.cappedAt}) would be exceeded. User has paid $${amountPaid.toFixed(2)} but tokens NOT credited. Requires admin review.`);
+
+      await db.auditLog.create({
+        data: {
+          actorId:     metadata.userId,
+          actorType:   "system",
+          eventType:   "stripe_token_credit_failed",
+          payloadJson: {
+            stripeEventId:  event.id,
+            userId:         metadata.userId,
+            tokens,
+            packId,
+            amountPaid,
+            reason:         "wallet_cap_exceeded",
+            cappedAt:       creditResult.cappedAt,
+            currentBalance: creditResult.newBalance,
+          },
+        },
+      });
+    }
 
     await db.auditLog.create({
       data: {
@@ -62,11 +85,12 @@ export async function POST(req: NextRequest) {
           tokens,
           packId,
           amountPaid,
+          credited:      creditResult.success,
         },
       },
     });
 
-    console.log(`[STRIPE] Credited ${tokens} tokens to user ${metadata.userId}`);
+    console.log(`[STRIPE] ${creditResult.success ? "Credited" : "FAILED to credit"} ${tokens} tokens to user ${metadata.userId}`);
   }
 
   return NextResponse.json({ received: true });

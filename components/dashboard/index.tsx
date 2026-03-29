@@ -68,20 +68,6 @@ const TASK_TYPES: {
       </svg>
     ),
   },
-  {
-    type:   "OTHER",
-    label:  "Other / not sure",
-    desc:   "Describe it — we'll figure it out",
-    tokens: "5–50 tokens",
-    iconBg: "var(--surface-page)",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="4.5" cy="8" r="1" fill="var(--text-tertiary)"/>
-        <circle cx="8" cy="8" r="1" fill="var(--text-tertiary)"/>
-        <circle cx="11.5" cy="8" r="1" fill="var(--text-tertiary)"/>
-      </svg>
-    ),
-  },
 ];
 
 export function NewTaskButton() {
@@ -141,7 +127,7 @@ export function NewTaskButton() {
               What do you need help with?
             </div>
 
-            <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="grid grid-cols-2 gap-2 mb-4">
               {TASK_TYPES.filter(t => t.type !== "OTHER").map((item) => (
                 <button
                   key={item.type}
@@ -165,25 +151,6 @@ export function NewTaskButton() {
                 </button>
               ))}
             </div>
-
-            {/* Other option */}
-            <button
-              onClick={() => setSelected("OTHER")}
-              className="w-full text-left p-3 rounded-lg border flex items-center gap-3 transition-all duration-100 mb-4"
-              style={{
-                borderWidth: selected === "OTHER" ? "2px" : "0.5px",
-                borderColor: selected === "OTHER" ? "var(--kb-navy)" : "rgba(0,0,0,0.12)",
-                background:  selected === "OTHER" ? "var(--kb-navy-pale)" : "white",
-              }}
-            >
-              <div className="w-7 h-7 rounded-md flex items-center justify-center" style={{ background: "var(--surface-page)" }}>
-                {TASK_TYPES[3].icon}
-              </div>
-              <div>
-                <div className="text-[13px] font-medium text-[var(--text-primary)]">Other / not sure</div>
-                <div className="text-[11px] text-[var(--text-secondary)]">Describe your situation — the AI will figure it out</div>
-              </div>
-            </button>
 
             {/* Brief description */}
             {selected && (
@@ -438,7 +405,7 @@ export function ReferralCard({ referralCode }: { referralCode: string }) {
             Refer a friend
           </div>
           <div className="text-[11px]" style={{ color: "var(--kb-navy-mid)" }}>
-            You earn 3 tokens for every friend who signs up
+            You earn 5 tokens for every friend who joins
           </div>
         </div>
       </div>

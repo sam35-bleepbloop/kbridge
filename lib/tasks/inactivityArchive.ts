@@ -44,26 +44,33 @@ export async function archiveInactiveTasks(): Promise<number> {
   if (staleTasks.length === 0) return 0;
 
   const now = new Date();
+  const archiveNote = {
+    note:      `Auto-archived by cron: no user activity for ${INACTIVITY_DAYS} days. Opening token deposit already burned — no refund.`,
+    timestamp: now.toISOString(),
+    source:    "cron",
+  };
 
-  await db.$transaction(
-    staleTasks.map((task) =>
-      db.task.update({
-        where: { id: task.id },
-        data: {
-          status:     "CANCELLED",
-          closedAt:   now,
-          // Append auto-archive note to internalNotesJson
-          internalNotesJson: {
-            push: {
-              note:      `Auto-archived by cron: no user activity for ${INACTIVITY_DAYS} days. Opening token deposit already burned — no refund.`,
-              timestamp: now.toISOString(),
-              source:    "cron",
-            },
-          },
-        },
-      })
-    )
-  );
+  // Read existing notes, append archive note, write full array back.
+  // Prisma JSONB { push } does not reliably append to arrays — see workaround #10.
+  for (const task of staleTasks) {
+    const existing = await db.task.findUnique({
+      where:  { id: task.id },
+      select: { internalNotesJson: true },
+    });
+
+    const existingNotes = Array.isArray(existing?.internalNotesJson)
+      ? existing.internalNotesJson
+      : [];
+
+    await db.task.update({
+      where: { id: task.id },
+      data: {
+        status:            "CANCELLED",
+        closedAt:          now,
+        internalNotesJson: [...existingNotes, archiveNote],
+      },
+    });
+  }
 
   // Write audit logs outside the transaction to avoid bloating it
   await db.auditLog.createMany({

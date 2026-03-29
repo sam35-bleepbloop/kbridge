@@ -77,13 +77,46 @@ export async function POST(req: NextRequest) {
 
   // Fire async label generation — does not block response
   // Label appears on dashboard/task list once generated (~1–2s)
-  fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/tasks/${task.id}/label`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description, type }),
-  }).catch(() => { /* non-critical — label stays null if this fails */ });
+  // NOTE: Previously used fetch() to /api/tasks/[id]/label but that fails because
+  // server-to-server calls don't carry the user's session cookie (workaround #125).
+  // Now calls the AI directly — no auth needed for an internal background operation.
+  generateLabel(task.id, description, type).catch(() => {
+    /* non-critical — label stays null if this fails */
+  });
 
   return NextResponse.json({ taskId: task.id, tokenEstimate: estimate, range });
+}
+
+/**
+ * Generate an AI task label in the background.
+ * Called directly from task creation — not via HTTP to avoid auth issues.
+ */
+async function generateLabel(taskId: string, description: string, type: string): Promise<void> {
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const anthropic = new Anthropic();
+
+  const response = await anthropic.messages.create({
+    model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514",
+    max_tokens: 30,
+    messages: [
+      {
+        role: "user",
+        content: `Generate a short task label (4-6 words maximum) that summarizes this user request. Return ONLY the label text, nothing else. No quotes, no punctuation at the end.\n\nTask type: ${type.replace(/_/g, " ")}\nUser message: "${description.slice(0, 300)}"`,
+      },
+    ],
+  });
+
+  const labelText =
+    response.content[0]?.type === "text"
+      ? response.content[0].text.trim()
+      : null;
+
+  if (labelText) {
+    await db.task.update({
+      where: { id: taskId },
+      data:  { label: labelText },
+    });
+  }
 }
 
 export async function GET(req: NextRequest) {

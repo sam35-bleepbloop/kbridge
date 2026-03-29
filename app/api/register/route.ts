@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { hash } from "bcryptjs";
+import { createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getUniqueReferralCode } from "@/lib/utils/referral";
@@ -62,6 +63,9 @@ export async function POST(req: NextRequest) {
   const passwordHash = await hash(password, 12);
   const referralCode = await getUniqueReferralCode();
 
+  // SHA-256 hash of lowercased email — retained permanently for welcome token abuse prevention (workaround #90)
+  const hashedEmail = createHash("sha256").update(email.toLowerCase()).digest("hex");
+
   // Create user — password stored in image field (workaround #1)
   // sofaDeclaration defaults to US_BASED — Tier 1 self-cert upgrades to PENDING_SOFA
   const user = await db.user.create({
@@ -69,6 +73,7 @@ export async function POST(req: NextRequest) {
       email,
       displayName,
       image:            passwordHash,
+      hashedEmail,
       tokenBalance:     WELCOME_BONUS,
       sofaDeclaration:  "US_BASED",
       addressJson:      address,
