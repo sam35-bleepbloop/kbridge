@@ -76,8 +76,26 @@ const NAV = [
       </svg>
     ),
   },
+  {
+    href:  "/admin/pricing-rules",
+    label: "Token Pricing",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+        <circle cx="7.5" cy="7.5" r="5.5" stroke="currentColor" strokeWidth="1.2"/>
+        <path d="M7.5 4.5v1M7.5 9.5v1M5.5 6.5a2 2 0 0 1 4 0c0 1.5-2 2-2 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+  {
+    href:  "/admin/pioneer-tasks",
+    label: "Pioneer Tasks",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+        <path d="M7.5 1.5l1.5 3.5H13l-3 2.5 1 4-3.5-2-3.5 2 1-4-3-2.5h4z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
   { href: "/admin/knowledge", label: "Knowledge Base", icon: "..." },
-
 ];
 
 function roleLabel(role: string) {

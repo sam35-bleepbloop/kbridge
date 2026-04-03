@@ -1,0 +1,51 @@
+// ============================================================
+// SCHEMA ADDITIONS — Pioneer Bonus + Dynamic Token Pricing
+// Add these to prisma/schema.prisma
+// ============================================================
+
+// ------------------------------------------------------------
+// 1. ADD isPioneerTask to the Task model
+//    Find the Task model and add this field:
+// ------------------------------------------------------------
+
+// isPioneerTask   Boolean   @default(false)   // true if no TaskPricingRule matched at completion
+
+// ------------------------------------------------------------
+// 2. ADD the TaskPricingRule model (new — add after PromotionCode)
+// ------------------------------------------------------------
+
+model TaskPricingRule {
+  id              String    @id @default(cuid())
+
+  // Human-readable category name — must match the AI-generated task label
+  // Examples: "Traffic Ticket Payment", "Airport Transfer Booking", "Utility Bill Payment"
+  category        String    @unique
+
+  // Token cost for this category (AI-only path). Range: 2–10.
+  // The 1 opening token is credited toward this — so if tokenCost = 4,
+  // the completion burn is 3 additional tokens.
+  tokenCost       Int       // 2–10
+
+  // Optional description to help admin identify the category
+  description     String?
+
+  // Whether this rule is active. Inactive rules are skipped during lookup.
+  isActive        Boolean   @default(true)
+
+  // Audit
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ------------------------------------------------------------
+// NOTES FOR db push:
+//
+// Run in Git Bash (stop dev server first):
+//   npx prisma db push
+//
+// This adds:
+//   - TaskPricingRule table (new)
+//   - isPioneerTask Boolean column on Task (default false, non-breaking)
+//
+// No data migration needed — all existing tasks will get isPioneerTask = false.
+// ------------------------------------------------------------

@@ -283,6 +283,9 @@ model Task {
   escalationReason   String?
   assignedEmployeeId String?
 
+  // Pioneer bonus flag — set true at completion if no TaskPricingRule matched the task label
+  isPioneerTask      Boolean     @default(false)
+
   // Vendor outreach SMS escalation timer
   vendorOutreachSentAt     DateTime?  // When the outreach SMS was sent to vendor
   vendorOutreachDeadlineAt DateTime?  // When auto-escalation triggers if no vendor response
@@ -598,6 +601,34 @@ model PromotionCode {
   createdAt    DateTime  @default(now())
 
   @@index([code])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TASK PRICING RULES — NEW v4.1
+// Dynamic token cost schedule for ONE_OFF_PAYMENT tasks.
+// Admin-managed. Tasks with no matching rule are charged the Pioneer bonus rate (2 tokens).
+// ─────────────────────────────────────────────────────────────────────────────
+
+model TaskPricingRule {
+  id          String   @id @default(cuid())
+
+  // Must match the AI-generated task label (case-insensitive partial match in application layer)
+  // Examples: "Traffic Ticket Payment", "Airport Transfer Booking", "Utility Bill Payment"
+  category    String   @unique
+
+  // Token cost for this category (AI-only path). Range: 2–10.
+  // The 1 opening token is credited toward this cost.
+  // e.g. tokenCost = 4 → completion burn = 3 additional tokens
+  tokenCost   Int      // 2–10
+
+  // Optional internal note for admin reference
+  description String?
+
+  // Inactive rules are skipped during lookup
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model KnowledgeEntry {
